@@ -12,7 +12,7 @@ detector:
   target_classes: [drone, aircraft]   # classes we are allowed to lock on
 
 tracker:
-  type: "csrt"                 # OpenCV tracker used between detections
+  type: "kcf"                 # OpenCV tracker used between detections
   detect_every_n_frames: 5     # run YOLO once every N frames
 
 lock:
