@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Veri seti ve model ciktilari
+datasets/
+data/
+runs/
+*.pt
+*.onnx
+*.engine
+
+# Videolar ve loglar
+*.mp4
+*.avi
+logs/
