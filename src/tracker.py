@@ -1,4 +1,8 @@
-"""Tracker module: hybrid detection + tracking for a single target."""
+"""Tracker module: hybrid detection + tracking for a single target,
+with temporal class voting."""
+
+from collections import Counter, deque
+from dataclasses import dataclass
 
 import cv2
 
@@ -26,17 +30,34 @@ def _create_tracker(tracker_type):
     raise ValueError(f"Unknown tracker type: {tracker_type}")
 
 
+@dataclass
+class TrackResult:
+    box: tuple          # (x1, y1, x2, y2)
+    source: str         # "detector" or "tracker"
+    raw_class: str      # class from this frame's detection (None on tracker frames)
+    voted_class: str    # majority class over recent detections
+
+
 class HybridTracker:
-    def __init__(self, detector, tracker_type="csrt", detect_every_n_frames=5):
+    def __init__(self, detector, tracker_type="kcf",
+                 detect_every_n_frames=5, vote_window=10):
         self.detector = detector
         self.tracker_type = tracker_type
         self.detect_every_n = detect_every_n_frames
         self.tracker = None
         self.frame_idx = 0
+        # Remembers only the last `vote_window` classes, older ones drop out
+        self.class_history = deque(maxlen=vote_window)
+
+    def _voted_class(self):
+        return Counter(self.class_history).most_common(1)[0][0]
+
+    def _reset(self):
+        self.tracker = None
+        self.class_history.clear()
 
     def update(self, frame):
-        """Return (box, source) for the target, or (None, None) if lost.
-        box is (x1, y1, x2, y2); source is "detector" or "tracker"."""
+        """Return a TrackResult, or None if there is no target."""
         # Run YOLO every N frames, or every frame while we have no target
         run_detector = (self.frame_idx % self.detect_every_n == 0) or self.tracker is None
         self.frame_idx += 1
@@ -49,52 +70,50 @@ class HybridTracker:
                 # Re-initialise tracker -> clears accumulated drift
                 self.tracker = _create_tracker(self.tracker_type)
                 self.tracker.init(frame, _xyxy_to_xywh(target.box))
-                return target.box, "detector"
+                self.class_history.append(target.cls_name)
+                return TrackResult(target.box, "detector",
+                                   target.cls_name, self._voted_class())
             # Detector found nothing: let the tracker try
 
         if self.tracker is not None:
             ok, box = self.tracker.update(frame)
             if ok:
-                return _xywh_to_xyxy(box), "tracker"
-            self.tracker = None   # lost -> detector will run on next frame
+                return TrackResult(_xywh_to_xyxy(box), "tracker",
+                                   None, self._voted_class())
+            self._reset()   # lost -> forget the target and its votes
 
-        return None, None
+        return None
 
 
-# Quick standalone test: python src/tracker.py [N]
+# Quick standalone test: python src/tracker.py [video_path]
 if __name__ == "__main__":
     import sys
-    import time
 
     from detector import Detector
     from source import VideoSource
 
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 5
-    det = Detector("yolo11n.pt", target_classes=["person"])
-    tracker_type = sys.argv[2] if len(sys.argv) > 2 else "csrt"
-    trk = HybridTracker(det, tracker_type=tracker_type, detect_every_n_frames=n)
-    src = VideoSource(0)
+    video = sys.argv[1] if len(sys.argv) > 1 else "videos/test.mp4"
+    det = Detector("weights/best.pt", conf_threshold=0.25,
+                   target_classes=["drone", "aircraft", "helicopter"])
+    trk = HybridTracker(det, tracker_type="kcf", detect_every_n_frames=5)
+    src = VideoSource(video)
 
-    prev = time.time()
-    fps = 0.0
+    cv2.namedWindow("tracker test", cv2.WINDOW_NORMAL)   # resizable window
     while True:
         frame = src.read()
         if frame is None:
             break
 
-        box, source = trk.update(frame)
-        if box:
+        res = trk.update(frame)
+        if res:
             # green = YOLO, yellow = tracker
-            color = (0, 255, 0) if source == "detector" else (0, 255, 255)
-            cv2.rectangle(frame, box[:2], box[2:], color, 2)
-            cv2.putText(frame, source, (box[0], box[1] - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-        now = time.time()
-        fps = 0.9 * fps + 0.1 * (1.0 / (now - prev))
-        prev = now
-        cv2.putText(frame, f"FPS: {fps:.1f}  N={n}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            color = (0, 255, 0) if res.source == "detector" else (0, 255, 255)
+            cv2.rectangle(frame, res.box[:2], res.box[2:], color, 3)
+            label = f"vote: {res.voted_class}"
+            if res.raw_class:
+                label += f" | raw: {res.raw_class}"
+            cv2.putText(frame, label, (res.box[0], res.box[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
 
         cv2.imshow("tracker test", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):

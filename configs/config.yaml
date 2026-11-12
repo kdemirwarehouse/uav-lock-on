@@ -7,15 +7,19 @@ source:
 
 detector:
   weights: "weights/best.pt"   # trained YOLO model
-  img_size: 640                # must match training imgsz
-  conf_threshold: 0.4          # ignore detections below this confidence
-  target_classes: [drone, aircraft]   # classes we are allowed to lock on
+  img_size: 640                # must match training imgsz (960 was worse)
+  conf_threshold: 0.25         # 0.4 missed frames on real video
+  # Question 1: what do we TRACK? -> anything that flies (not birds)
+  track_classes: [drone, aircraft, helicopter]
 
 tracker:
-  type: "kcf"                 # OpenCV tracker used between detections
+  type: "kcf"                  # faster than csrt on CPU (~15 vs ~6 FPS at N=5)
   detect_every_n_frames: 5     # run YOLO once every N frames
+  vote_window: 10              # last N detections used for class voting
 
 lock:
+  # Question 2: what do we LOCK ON? -> decided by the voted class
+  target_classes: [drone, aircraft]
   # Lock region as fractions of the frame (0.0 - 1.0)
   # TODO: verify with current Teknofest Savasan IHA rules
   region:
