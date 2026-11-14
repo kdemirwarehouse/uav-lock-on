@@ -1,6 +1,7 @@
 """Tracker module: hybrid detection + tracking for a single target,
 with temporal class voting."""
 
+import math
 from collections import Counter, deque
 from dataclasses import dataclass
 
@@ -22,6 +23,11 @@ def _box_area(box):
     return (x2 - x1) * (y2 - y1)
 
 
+def _center_distance(a, b):
+    return math.hypot((a[0] + a[2]) / 2 - (b[0] + b[2]) / 2,
+                      (a[1] + a[3]) / 2 - (b[1] + b[3]) / 2)
+
+
 def _create_tracker(tracker_type):
     if tracker_type == "csrt":
         return cv2.TrackerCSRT_create()
@@ -40,21 +46,34 @@ class TrackResult:
 
 class HybridTracker:
     def __init__(self, detector, tracker_type="kcf",
-                 detect_every_n_frames=5, vote_window=10):
+                 detect_every_n_frames=5, vote_window=10,
+                 reset_after_missed_frames=15):
         self.detector = detector
         self.tracker_type = tracker_type
         self.detect_every_n = detect_every_n_frames
+        self.reset_after_missed = reset_after_missed_frames
         self.tracker = None
         self.frame_idx = 0
         # Remembers only the last `vote_window` classes, older ones drop out
         self.class_history = deque(maxlen=vote_window)
+        self.missed_frames = 0      # consecutive frames with no target at all
+        self.last_box = None        # last known target box, for re-acquisition
 
     def _voted_class(self):
         return Counter(self.class_history).most_common(1)[0][0]
 
-    def _reset(self):
-        self.tracker = None
+    def _forget_target(self):
+        """Target is really gone: drop its votes too."""
         self.class_history.clear()
+        self.last_box = None
+
+    def _is_new_target(self, box, frame):
+        # After a loss, a detection far from where the target was is most
+        # likely a different object -> its class must not inherit old votes.
+        if self.last_box is None:
+            return False
+        h, w = frame.shape[:2]
+        return _center_distance(box, self.last_box) > 0.5 * math.hypot(w, h)
 
     def update(self, frame):
         """Return a TrackResult, or None if there is no target."""
@@ -67,10 +86,14 @@ class HybridTracker:
             if detections:
                 # Rule: follow the largest target (most likely the closest)
                 target = max(detections, key=lambda d: _box_area(d.box))
+                if self.tracker is None and self._is_new_target(target.box, frame):
+                    self._forget_target()
                 # Re-initialise tracker -> clears accumulated drift
                 self.tracker = _create_tracker(self.tracker_type)
                 self.tracker.init(frame, _xyxy_to_xywh(target.box))
                 self.class_history.append(target.cls_name)
+                self.missed_frames = 0
+                self.last_box = target.box
                 return TrackResult(target.box, "detector",
                                    target.cls_name, self._voted_class())
             # Detector found nothing: let the tracker try
@@ -78,10 +101,18 @@ class HybridTracker:
         if self.tracker is not None:
             ok, box = self.tracker.update(frame)
             if ok:
-                return TrackResult(_xywh_to_xyxy(box), "tracker",
-                                   None, self._voted_class())
-            self._reset()   # lost -> forget the target and its votes
+                box = _xywh_to_xyxy(box)
+                self.missed_frames = 0
+                self.last_box = box
+                return TrackResult(box, "tracker", None, self._voted_class())
+            # A single KCF failure is common (blur, fast motion). Drop only the
+            # tracker so YOLO runs next frame, but keep the votes: wiping them
+            # here made the class flip right after a one-frame loss.
+            self.tracker = None
 
+        self.missed_frames += 1
+        if self.missed_frames >= self.reset_after_missed:
+            self._forget_target()
         return None
 
 

@@ -119,6 +119,7 @@ def main():
         tracker_type=trk_cfg["type"],
         detect_every_n_frames=trk_cfg["detect_every_n_frames"],
         vote_window=trk_cfg["vote_window"],
+        reset_after_missed_frames=trk_cfg["reset_after_missed_frames"],
     )
 
     lock_cfg = cfg["lock"]

@@ -16,6 +16,7 @@ tracker:
   type: "kcf"                  # faster than csrt on CPU (~15 vs ~6 FPS at N=5)
   detect_every_n_frames: 5     # run YOLO once every N frames
   vote_window: 10              # last N detections used for class voting
+  reset_after_missed_frames: 15  # clear votes only after N frames with no target at all
 
 lock:
   # Question 2: what do we LOCK ON? -> decided by the voted class
