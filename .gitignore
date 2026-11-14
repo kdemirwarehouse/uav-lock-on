@@ -16,3 +16,8 @@ runs/
 *.mp4
 *.avi
 logs/
+
+# Local-only folders (model weights, input videos, run outputs)
+weights/
+videos/
+outputs/
