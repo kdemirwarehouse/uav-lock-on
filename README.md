@@ -230,4 +230,4 @@ python src\output.py           # synthetic scene; add --headless to skip the win
 ## Credits
 
 - Dataset: [Drone detection](https://universe.roboflow.com/computer-vision-yxj4a/drone-detection-oqauc) by `computer-vision-yxj4a` on Roboflow Universe, licensed under CC BY 4.0.
-- Test video: `Grisha Grishkoff` on Pexels (`https://www.pexels.com/tr-tr/download/video/4446625/`)
+- Test video: `Grisha Grishkoff` on Pexels (`https://www.pexels.com/tr-tr/video/4446625/`)
